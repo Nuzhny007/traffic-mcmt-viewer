@@ -21,7 +21,7 @@ npm.cmd run dev
 
 ### Реальный backend (этап 2b)
 
-Viewer совместим с C++ `trafficmcmt_map_gateway` из репозитория TrafficMCMT.
+Viewer совместим с C++ `trafficmcmt_map_gateway` из репозитория [TrafficMCMT](https://github.com/Nuzhny007/TrafficMCMT).
 Gateway читает JSONL с треклетами и отдаёт протокол v1 по адресу
 `ws://localhost:8080/ws` (health: `http://localhost:8080/health`).
 
