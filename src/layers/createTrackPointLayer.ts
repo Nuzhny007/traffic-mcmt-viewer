@@ -9,6 +9,8 @@ export function createTrackPointLayer(
   selectedId: number | null,
   /** Monotonic render time, or null to draw the raw last position. */
   atMs: number | null,
+  /** Quantised time for the fade colour; slower than `atMs` on purpose. */
+  fadeAtMs: number | null,
   ttlMs: number,
 ) {
   return new ScatterplotLayer<LiveTrack>({
@@ -22,7 +24,8 @@ export function createTrackPointLayer(
     radiusMinPixels: 3,
     getFillColor: (track) => {
       const [r, g, b, a] = classColor(track.className);
-      const alpha = atMs === null ? a : a * fadeAlpha(atMs - track.lastSeen, ttlMs);
+      const alpha =
+        fadeAtMs === null ? a : a * fadeAlpha(fadeAtMs - track.lastSeen, ttlMs);
       return [r, g, b, Math.round(alpha)];
     },
     stroked: true,
@@ -33,7 +36,9 @@ export function createTrackPointLayer(
     pickable: true,
     updateTriggers: {
       getPosition: [atMs],
-      getFillColor: [atMs, ttlMs],
+      // The fade changes over seconds, so a 4 Hz bucket is enough and saves an
+      // attribute upload per frame.
+      getFillColor: [fadeAtMs, ttlMs],
       getRadius: [selectedId],
       getLineColor: [selectedId],
       getLineWidth: [selectedId],

@@ -1,5 +1,6 @@
 import { POLLUTANT_INFO, rampCss } from '../emissions/palette';
 import { useEmissionStore } from '../store/emissionStore';
+import { useViewStore } from '../store/viewStore';
 import { POLLUTANTS } from '../types/emissions';
 
 function formatConcentration(value: number): string {
@@ -34,6 +35,8 @@ export function EmissionPanel() {
   const rows = useEmissionStore((state) => state.rows);
   const setVisible = useEmissionStore((state) => state.setVisible);
   const setPollutant = useEmissionStore((state) => state.setPollutant);
+  const opacity = useViewStore((state) => state.emissionOpacity);
+  const setOpacity = useViewStore((state) => state.setEmissionOpacity);
 
   if (!available) {
     return null;
@@ -87,6 +90,18 @@ export function EmissionPanel() {
         <span>0</span>
         <span>{current ? formatConcentration(current.max) : '—'}</span>
       </div>
+
+      <label className="emission-opacity">
+        <span>прозрачность</span>
+        <input
+          type="range"
+          min={0.1}
+          max={1}
+          step={0.05}
+          value={opacity}
+          onChange={(event) => setOpacity(Number(event.target.value))}
+        />
+      </label>
 
       {current ? (
         <dl className="emission-stats">

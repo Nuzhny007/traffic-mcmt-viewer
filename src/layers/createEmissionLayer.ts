@@ -56,6 +56,7 @@ export function createEmissionLayer(
   frame: EmissionGridMessage | null,
   pollutant: Pollutant,
   visible: boolean,
+  opacity: number,
 ): BitmapLayer | null {
   if (!visible || !frame) {
     return null;
@@ -70,7 +71,7 @@ export function createEmissionLayer(
     id: 'emission-grid',
     image: canvas,
     bounds: [west, south, east, north],
-    opacity: 0.72,
+    opacity,
     pickable: false,
   });
 }

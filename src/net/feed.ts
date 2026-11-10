@@ -80,10 +80,22 @@ function pushStats(): void {
   messagesInWindow = 0;
   windowStartedAt = now;
 
+  // Per-class/camera totals feed the filter chips. One pass per second over the
+  // buffer is cheap even at a few thousand tracks and keeps React out of the
+  // 10 Hz path.
+  const classCounts: Record<string, number> = {};
+  const cameraCounts: Record<number, number> = {};
+  for (const track of trackBuffer.list()) {
+    classCounts[track.className] = (classCounts[track.className] ?? 0) + 1;
+    cameraCounts[track.cameraId] = (cameraCounts[track.cameraId] ?? 0) + 1;
+  }
+
   useTrackingStore.getState().setStats({
     trackCount: trackBuffer.size,
     messageRate,
     lastMessageAt: lastMessageAt || null,
+    classCounts,
+    cameraCounts,
   });
 }
 

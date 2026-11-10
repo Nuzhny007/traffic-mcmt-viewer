@@ -2,6 +2,16 @@ import type { RGBA } from '../types/tracking';
 
 export type TrackClass = 'car' | 'truck' | 'bus' | 'person' | 'bike' | 'unknown';
 
+/** Every class in legend order; the filter starts with all of them visible. */
+export const ALL_CLASSES: readonly TrackClass[] = [
+  'car',
+  'truck',
+  'bus',
+  'person',
+  'bike',
+  'unknown',
+];
+
 export const CLASS_COLORS: Record<TrackClass, RGBA> = {
   car: [56, 189, 248, 235],
   truck: [251, 146, 60, 235],

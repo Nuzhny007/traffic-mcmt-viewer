@@ -1,18 +1,17 @@
 import { useCallback, useEffect } from 'react';
 
+import { ControlPanel } from './components/ControlPanel';
 import { EmissionPanel } from './components/EmissionPanel';
 import { MapView } from './components/MapView';
+import { TrackDetails } from './components/TrackDetails';
 import { appConfig } from './config';
-import { nowMs } from './domain/clock';
-import {
-  CLASS_COLORS,
-  classColor,
-  classLabel,
-} from './domain/classes';
+import { ALL_CLASSES } from './domain/classes';
+import { matchesFilter } from './domain/filter';
 import { useFps } from './hooks/useFps';
 import { useSelectedTrack } from './hooks/useSelectedTrack';
 import { startFeed, stopFeed } from './net/feed';
 import { useTrackingStore } from './store/trackingStore';
+import { startViewSync, useViewStore } from './store/viewStore';
 import type { ConnectionStatus } from './types/tracking';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -29,6 +28,53 @@ const STATUS_CLASS: Record<ConnectionStatus, string> = {
   closed: 'status-offline',
 };
 
+/** Digits 1–6 toggle classes; H/Z toggle layers; Esc clears the selection. */
+function useViewShortcuts(clearSelection: () => void) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        if (event.key === 'Escape') {
+          target.blur();
+        }
+        return;
+      }
+
+      if (/^[1-9]$/.test(event.key)) {
+        const className = ALL_CLASSES[Number(event.key) - 1];
+        if (className) {
+          const view = useViewStore.getState();
+          if (event.shiftKey) {
+            view.onlyClass(className);
+          } else {
+            view.toggleClass(className);
+          }
+        }
+        return;
+      }
+
+      const view = useViewStore.getState();
+      switch (event.key.toLowerCase()) {
+        case 'h':
+          view.setShowTrails(!view.showTrails);
+          break;
+        case 'z':
+          view.setShowZones(!view.showZones);
+          break;
+        case 'escape':
+          view.setQuery('');
+          clearSelection();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [clearSelection]);
+}
+
 export function App() {
   const fps = useFps();
   const selectedId = useTrackingStore((state) => state.selectedId);
@@ -38,18 +84,27 @@ export function App() {
   const zones = useTrackingStore((state) => state.zones);
   const trackCount = useTrackingStore((state) => state.trackCount);
   const messageRate = useTrackingStore((state) => state.messageRate);
+  const view = useViewStore();
 
   const selected = useSelectedTrack(selectedId);
+  const hiddenByFilter = selected !== null && !matchesFilter(selected, view);
 
   useEffect(() => {
     startFeed();
-    return () => stopFeed();
+    const stopViewSync = startViewSync();
+    return () => {
+      stopViewSync();
+      stopFeed();
+    };
   }, []);
 
   const handleSelect = useCallback(
     (id: number | null) => select(id),
     [select],
   );
+  const clearSelection = useCallback(() => select(null), [select]);
+
+  useViewShortcuts(clearSelection);
 
   const statusText =
     connection === 'closed' && reconnectAttempt > 0
@@ -62,7 +117,7 @@ export function App() {
         <div className="brand">
           TrafficMCMT <span>Viewer</span>
         </div>
-        <span className="badge">этап 2c · выбросы</span>
+        <span className="badge">этап 5 · фильтры и слои</span>
 
         <div className="spacer" />
 
@@ -90,10 +145,21 @@ export function App() {
         <MapView selectedId={selectedId} onSelect={handleSelect} />
 
         <div className="hud hud-hint">
-          ЛКМ — выбрать трек · колесо — зум · ЛКМ+перетаскивание — пан
+          ЛКМ — выбрать трек · 1–6 — классы · H/Z — слои · Esc — сброс
         </div>
 
         <EmissionPanel />
+
+        <div className="hud-column">
+          <ControlPanel />
+          {selected && (
+            <TrackDetails
+              track={selected}
+              hiddenByFilter={hiddenByFilter}
+              onClear={clearSelection}
+            />
+          )}
+        </div>
 
         {connection !== 'open' && (
           <div className="hud hud-connection">
@@ -113,58 +179,6 @@ export function App() {
               или mock: <code>npm run mock</code>
             </div>
           </div>
-        )}
-
-        <div className="hud hud-legend">
-          <div className="hud-title">Классы объектов</div>
-          <ul className="legend">
-            {Object.entries(CLASS_COLORS).map(([className, color]) => (
-              <li key={className}>
-                <span
-                  className="legend-dot"
-                  style={{ backgroundColor: `rgb(${color[0]}, ${color[1]}, ${color[2]})` }}
-                />
-                {classLabel(className)}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        {selected && (
-          <aside className="hud hud-details">
-            <div className="hud-title">Трек #{selected.id}</div>
-            <dl>
-              <dt>Класс</dt>
-              <dd>
-                <span
-                  className="legend-dot"
-                  style={{
-                    backgroundColor: `rgb(${classColor(selected.className)
-                      .slice(0, 3)
-                      .join(', ')})`,
-                  }}
-                />
-                {classLabel(selected.className)}
-              </dd>
-              <dt>Камера</dt>
-              <dd>CAM {selected.cameraId}</dd>
-              <dt>Позиция</dt>
-              <dd>
-                {selected.position[1].toFixed(5)}, {selected.position[0].toFixed(5)}
-              </dd>
-              <dt>Скорость</dt>
-              <dd>
-                {selected.speedKmh.toFixed(1)} км/ч
-              </dd>
-              <dt>Точек в хвосте</dt>
-              <dd>{selected.trail.length}</dd>
-              <dt>Обновлён</dt>
-              <dd>{((nowMs() - selected.lastSeen) / 1000).toFixed(1)} с назад</dd>
-            </dl>
-            <button type="button" onClick={() => select(null)}>
-              Сбросить выбор
-            </button>
-          </aside>
         )}
       </main>
 

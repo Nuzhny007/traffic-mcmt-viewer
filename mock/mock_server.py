@@ -1,7 +1,8 @@
 """Mock TrafficMCMT WebSocket server (protocol v1).
 
-Generates moving tracks around Aire (France), camera zones, heartbeats and
-occasional ReID id merges, mimicking the C++ backend stream.
+Generates moving tracks around Aire (France), camera zones, heartbeats,
+occasional ReID id merges and a synthetic concentration grid, mimicking the C++
+backend stream.
 
 Usage:
     pip install -r mock/requirements.txt
@@ -12,11 +13,14 @@ Environment:
     MOCK_PORT       port (default 8080)
     MOCK_TICK_HZ    updates per second (default 10)
     MOCK_TRACKS     number of simulated tracks (default 60)
+    MOCK_EMISSIONS  emit emission_grid at 1 Hz (default 1, set 0 to disable)
 """
 
 from __future__ import annotations
 
+import array
 import asyncio
+import base64
 import json
 import math
 import os
@@ -30,7 +34,28 @@ HOST = os.getenv("MOCK_HOST", "0.0.0.0")
 PORT = int(os.getenv("MOCK_PORT", "8080"))
 TICK_HZ = float(os.getenv("MOCK_TICK_HZ", "10"))
 TRACK_COUNT = int(os.getenv("MOCK_TRACKS", "60"))
+EMISSIONS = os.getenv("MOCK_EMISSIONS", "1") not in ("0", "false", "off", "")
 WS_PATH = "/ws"
+
+# Concentration grid: 600 x 450 m of 5 m cells, centred on the road.
+EMISSION_COLS = 120
+EMISSION_ROWS = 90
+EMISSION_CELL_M = 5.0
+EMISSION_ORIGIN = (5.97445, 45.52736)
+EMISSION_HZ = 1.0
+# Plume offset and width, metres. Wind from 225 deg pushes it north-east.
+WIND_EAST = 0.7071
+WIND_NORTH = 0.7071
+EMISSION_SIGMA_M = 18.0
+EMISSION_DRIFT_M = 12.0
+# Peak concentration per unit of source strength, ug/m3.
+POLLUTANT_SCALE = {
+    "NOx": 900.0,
+    "CO": 7_000.0,
+    "PM2.5": 45.0,
+    "PM10": 90.0,
+    "CO2": 210_000.0,
+}
 
 EARTH_M_PER_DEG = 111_320.0
 
@@ -217,6 +242,105 @@ def zones_payload() -> str:
     )
 
 
+def _grid_bounds() -> dict[str, float]:
+    lat0 = EMISSION_ORIGIN[1]
+    m_per_deg_lon = EARTH_M_PER_DEG * math.cos(math.radians(lat0))
+    half_w = EMISSION_COLS * EMISSION_CELL_M / 2.0
+    half_h = EMISSION_ROWS * EMISSION_CELL_M / 2.0
+    return {
+        "west": EMISSION_ORIGIN[0] - half_w / m_per_deg_lon,
+        "south": lat0 - half_h / EARTH_M_PER_DEG,
+        "east": EMISSION_ORIGIN[0] + half_w / m_per_deg_lon,
+        "north": lat0 + half_h / EARTH_M_PER_DEG,
+    }
+
+
+def _concentration_field() -> list[float]:
+    """Sum of Gaussian puffs over the tracks, in relative units (0..1 per puff)."""
+    lat0 = EMISSION_ORIGIN[1]
+    m_per_deg_lon = EARTH_M_PER_DEG * math.cos(math.radians(lat0))
+    half_w = EMISSION_COLS * EMISSION_CELL_M / 2.0
+    half_h = EMISSION_ROWS * EMISSION_CELL_M / 2.0
+
+    sources: list[tuple[float, float]] = []
+    for track in TRACKS[:8]:
+        lon, lat, _east, _north = point_at(track.distance)
+        east = (lon - EMISSION_ORIGIN[0]) * m_per_deg_lon
+        north = (lat - lat0) * EARTH_M_PER_DEG
+        sources.append(
+            (
+                east + EMISSION_DRIFT_M * WIND_EAST,
+                north + EMISSION_DRIFT_M * WIND_NORTH,
+            )
+        )
+
+    inv = 1.0 / (2.0 * EMISSION_SIGMA_M * EMISSION_SIGMA_M)
+    field: list[float] = []
+    for row in range(EMISSION_ROWS):
+        y = (row + 0.5) * EMISSION_CELL_M - half_h
+        for col in range(EMISSION_COLS):
+            x = (col + 0.5) * EMISSION_CELL_M - half_w
+            total = 0.0
+            for source_east, source_north in sources:
+                dx = x - source_east
+                dy = y - source_north
+                total += math.exp(-(dx * dx + dy * dy) * inv)
+            field.append(total)
+    return field
+
+
+def _field_stats(values: list[float]) -> tuple[float, float, float]:
+    if not values:
+        return 0.0, 0.0, 0.0
+    peak = max(values)
+    mean = sum(values) / len(values)
+    nonzero = sorted(value for value in values if value > 0.0)
+    p95 = nonzero[int(0.95 * (len(nonzero) - 1))] if nonzero else 0.0
+    return peak, mean, p95
+
+
+def emission_payload() -> str:
+    """One `emission_grid` frame, same wire format as the C++ backend."""
+    field = _concentration_field()
+    fields: dict[str, dict[str, object]] = {}
+
+    for name, scale in POLLUTANT_SCALE.items():
+        values = [value * scale for value in field]
+        peak, mean, p95 = _field_stats(values)
+        # float32 LE, row-major south -> north; `array("f")` is LE on every
+        # platform we support, matching the viewer's decoder.
+        encoded = base64.b64encode(array.array("f", values).tobytes()).decode("ascii")
+        fields[name] = {
+            "data": encoded,
+            "max": round(peak, 3),
+            "mean": round(mean, 3),
+            "p95": round(p95, 3),
+        }
+
+    return json.dumps(
+        {
+            "type": "emission_grid",
+            "timestamp": now_ms(),
+            "unit": "ug/m3",
+            "bounds": _grid_bounds(),
+            "cols": EMISSION_COLS,
+            "rows": EMISSION_ROWS,
+            "fields": fields,
+        },
+        separators=(",", ":"),
+    )
+
+
+LAST_EMISSION: str | None = None
+
+
+def current_emission_payload(refresh: bool = False) -> str:
+    global LAST_EMISSION
+    if refresh or LAST_EMISSION is None:
+        LAST_EMISSION = emission_payload()
+    return LAST_EMISSION
+
+
 async def broadcast(payload: str) -> None:
     dead: list[web.WebSocketResponse] = []
     for ws in list(CLIENTS):
@@ -289,6 +413,7 @@ async def tick_loop() -> None:
     next_heartbeat = time.monotonic() + 5.0
     next_merge = time.monotonic() + 20.0
     next_remove = time.monotonic() + 15.0
+    next_emission = time.monotonic()
 
     while True:
         next_tick += dt
@@ -312,6 +437,9 @@ async def tick_loop() -> None:
         )
 
         now = time.monotonic()
+        if EMISSIONS and now >= next_emission:
+            next_emission = now + 1.0 / EMISSION_HZ
+            await broadcast(current_emission_payload(refresh=True))
         if now >= next_heartbeat:
             next_heartbeat = now + 5.0
             await broadcast(
@@ -341,6 +469,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     try:
         await ws.send_str(zones_payload())
         await ws.send_str(snapshot_payload())
+        if EMISSIONS:
+            await ws.send_str(current_emission_payload())
 
         async for message in ws:
             if message.type == WSMsgType.TEXT and message.data == "ping":
@@ -371,6 +501,7 @@ async def health_handler(request: web.Request) -> web.Response:
             "tracks": len(TRACKS),
             "tick_hz": TICK_HZ,
             "road_length_m": round(TOTAL_LENGTH, 1),
+            "emissions": EMISSIONS,
         }
     )
 

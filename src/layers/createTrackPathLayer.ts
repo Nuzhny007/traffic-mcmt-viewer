@@ -8,6 +8,8 @@ export function createTrackPathLayer(
   tracks: LiveTrack[],
   /** Monotonic render time, or null to draw the raw last position. */
   atMs: number | null,
+  /** Quantised time for the fade colour; slower than `atMs` on purpose. */
+  fadeAtMs: number | null,
   ttlMs: number,
 ) {
   return new PathLayer<LiveTrack>({
@@ -16,7 +18,8 @@ export function createTrackPathLayer(
     getPath: (track) => trailWithHead(track.trail, deadReckon(track, atMs)),
     getColor: (track) => {
       const [r, g, b] = classColor(track.className);
-      const alpha = atMs === null ? 170 : 170 * fadeAlpha(atMs - track.lastSeen, ttlMs);
+      const alpha =
+        fadeAtMs === null ? 170 : 170 * fadeAlpha(fadeAtMs - track.lastSeen, ttlMs);
       return [r, g, b, Math.round(alpha)];
     },
     getWidth: 2.5,
@@ -27,7 +30,7 @@ export function createTrackPathLayer(
     pickable: false,
     updateTriggers: {
       getPath: [atMs],
-      getColor: [atMs, ttlMs],
+      getColor: [fadeAtMs, ttlMs],
     },
   });
 }

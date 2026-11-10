@@ -9,6 +9,7 @@ import type { Layer, PickingInfo } from '@deck.gl/core';
 
 import { appConfig } from '../config';
 import { nowMs } from '../domain/clock';
+import { filterTracks } from '../domain/filter';
 import { MAX_EXTRAPOLATION_MS } from '../domain/motion';
 import {
   createCameraLabelLayer,
@@ -22,12 +23,21 @@ import { trackBuffer } from '../net/feed';
 import type { LiveTrack } from '../net/trackBuffer';
 import { useEmissionStore } from '../store/emissionStore';
 import { useTrackingStore } from '../store/trackingStore';
+import { useViewStore } from '../store/viewStore';
 import type { CameraZone, Vec2 } from '../types/tracking';
 
 type Bounds = [[number, number], [number, number]];
 
 /** Idle redraw cadence; only the stale-track fade changes without new data. */
 const FADE_TICK_MS = 250;
+
+/**
+ * Trail geometry is far more expensive than point geometry: at 1000 tracks a
+ * 40-point path means 40 000 vertices, and rebuilding that attribute every
+ * animation frame costs ~10 FPS. 20 Hz is below the visible threshold for the
+ * trail tip while keeping the marker itself at the full frame rate.
+ */
+const TRAIL_UPDATE_MS = 50;
 
 function boundsOf(points: readonly Vec2[]): Bounds | null {
   if (points.length === 0) {
@@ -90,23 +100,31 @@ function DeckOverlay({ selectedId, onSelect }: MapViewProps) {
   useEffect(() => {
     let frame = 0;
     let lastVersion = -1;
+    let lastViewVersion = -1;
     let lastSelected: number | null | undefined;
     let lastZones: typeof zoneList | null = null;
     let lastEmissionKey = '';
     let lastRenderAt = 0;
+    // Filtered track list, recomputed when either the data or the filter
+    // changes — never inside the per-frame path.
+    let visible: LiveTrack[] = [];
+    let visibleVersion = -1;
+    let visibleViewVersion = -1;
 
     const render = () => {
       frame = requestAnimationFrame(render);
 
       const now = nowMs();
       const emissionState = useEmissionStore.getState();
-      const emissionKey = `${emissionBuffer.version}:${emissionState.visible}:${emissionState.pollutant}`;
+      const view = useViewStore.getState();
+      const emissionKey = `${emissionBuffer.version}:${emissionState.visible}:${emissionState.pollutant}:${view.emissionOpacity}`;
 
       const animating =
         appConfig.animate && now - trackBuffer.latestUpdateAt <= MAX_EXTRAPOLATION_MS + 40;
       const periodic = trackBuffer.size > 0 && now - lastRenderAt >= FADE_TICK_MS;
       const changed =
         trackBuffer.version !== lastVersion ||
+        view.version !== lastViewVersion ||
         selectedId !== lastSelected ||
         zoneList !== lastZones ||
         emissionKey !== lastEmissionKey;
@@ -116,27 +134,47 @@ function DeckOverlay({ selectedId, onSelect }: MapViewProps) {
       }
 
       lastVersion = trackBuffer.version;
+      lastViewVersion = view.version;
       lastSelected = selectedId;
       lastZones = zoneList;
       lastEmissionKey = emissionKey;
       lastRenderAt = now;
 
+      if (visibleVersion !== trackBuffer.version || visibleViewVersion !== view.version) {
+        visible = filterTracks(trackBuffer.list(), view);
+        visibleVersion = trackBuffer.version;
+        visibleViewVersion = view.version;
+        const store = useTrackingStore.getState();
+        if (store.visibleCount !== visible.length) {
+          store.setVisibleCount(visible.length);
+        }
+      }
+
       const atMs = appConfig.animate ? now : null;
-      const tracks = trackBuffer.list();
+      const trailAtMs =
+        atMs === null ? null : Math.floor(now / TRAIL_UPDATE_MS) * TRAIL_UPDATE_MS;
+      const fadeAtMs =
+        atMs === null ? null : Math.floor(now / FADE_TICK_MS) * FADE_TICK_MS;
       const layers: Layer[] = [];
       const emissionLayer = createEmissionLayer(
         emissionBuffer.frame,
         emissionState.pollutant,
         emissionState.visible,
+        view.emissionOpacity,
       );
       if (emissionLayer) {
         layers.push(emissionLayer);
       }
+      if (view.showZones) {
+        layers.push(createCameraZoneLayer(zoneList), createCameraLabelLayer(zoneList));
+      }
+      if (view.showTrails) {
+        layers.push(
+          createTrackPathLayer(visible, trailAtMs, fadeAtMs, appConfig.trackTtlMs),
+        );
+      }
       layers.push(
-        createCameraZoneLayer(zoneList),
-        createCameraLabelLayer(zoneList),
-        createTrackPathLayer(tracks, atMs, appConfig.trackTtlMs),
-        createTrackPointLayer(tracks, selectedId, atMs, appConfig.trackTtlMs),
+        createTrackPointLayer(visible, selectedId, atMs, fadeAtMs, appConfig.trackTtlMs),
       );
 
       overlay.setProps({ layers });
