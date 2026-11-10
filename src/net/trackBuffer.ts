@@ -10,7 +10,10 @@ export interface LiveTrack {
   /** Speed in km/h. Uses `speed_kmh` when provided, otherwise |velocity|. */
   speedKmh: number;
   trail: Vec2[];
-  /** Wall-clock time (ms) when the last update was applied. */
+  /**
+   * Monotonic time (ms, `nowMs()`) when the last update was applied. Used for
+   * TTL, dead reckoning and the stale-track fade, so it must never be wall time.
+   */
   lastSeen: number;
 }
 
@@ -46,9 +49,15 @@ export class TrackBuffer {
   private readonly tracks = new Map<number, LiveTrack>();
   private revision = 0;
   private cachedList: LiveTrack[] | null = null;
+  private latest = 0;
 
   get size(): number {
     return this.tracks.size;
+  }
+
+  /** Monotonic time of the most recent applied update; 0 when empty. */
+  get latestUpdateAt(): number {
+    return this.latest;
   }
 
   /** Increments on every data change; cheap change detector for the renderer. */
@@ -75,6 +84,10 @@ export class TrackBuffer {
   ): void {
     if (mode === 'snapshot') {
       this.tracks.clear();
+    }
+
+    if (updates.length > 0) {
+      this.latest = Math.max(this.latest, now);
     }
 
     let changed = mode === 'snapshot';
@@ -179,6 +192,7 @@ export class TrackBuffer {
   }
 
   clear(): void {
+    this.latest = 0;
     if (this.tracks.size === 0) {
       return;
     }

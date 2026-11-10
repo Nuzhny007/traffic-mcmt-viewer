@@ -3,6 +3,7 @@ import { useCallback, useEffect } from 'react';
 import { EmissionPanel } from './components/EmissionPanel';
 import { MapView } from './components/MapView';
 import { appConfig } from './config';
+import { nowMs } from './domain/clock';
 import {
   CLASS_COLORS,
   classColor,
@@ -158,7 +159,7 @@ export function App() {
               <dt>Точек в хвосте</dt>
               <dd>{selected.trail.length}</dd>
               <dt>Обновлён</dt>
-              <dd>{((Date.now() - selected.lastSeen) / 1000).toFixed(1)} с назад</dd>
+              <dd>{((nowMs() - selected.lastSeen) / 1000).toFixed(1)} с назад</dd>
             </dl>
             <button type="button" onClick={() => select(null)}>
               Сбросить выбор

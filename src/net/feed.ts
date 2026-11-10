@@ -1,4 +1,5 @@
 import { appConfig } from '../config';
+import { nowMs } from '../domain/clock';
 import { useEmissionStore } from '../store/emissionStore';
 import { useTrackingStore } from '../store/trackingStore';
 import type { CameraZone, ServerMessage } from '../types/tracking';
@@ -28,15 +29,17 @@ function applyZones(zones: CameraZone[]): void {
 }
 
 function handleMessage(message: ServerMessage): void {
+  const receivedAt = nowMs();
+
   messagesInWindow += 1;
-  lastMessageAt = Date.now();
+  lastMessageAt = receivedAt;
 
   switch (message.type) {
     case 'tracks_update':
       trackBuffer.apply(
         message.tracks,
         message.mode ?? 'delta',
-        lastMessageAt,
+        receivedAt,
       );
       if (message.camera_zones) {
         applyZones(message.camera_zones);
@@ -69,7 +72,7 @@ function handleMessage(message: ServerMessage): void {
 }
 
 function pushStats(): void {
-  const now = Date.now();
+  const now = nowMs();
   trackBuffer.prune(appConfig.trackTtlMs, now);
 
   const elapsed = Math.max(1, now - windowStartedAt);
@@ -105,7 +108,7 @@ export function startFeed(): void {
     },
   });
 
-  windowStartedAt = Date.now();
+  windowStartedAt = nowMs();
   lastMessageAt = 0;
   messagesInWindow = 0;
   zonesSignature = '';

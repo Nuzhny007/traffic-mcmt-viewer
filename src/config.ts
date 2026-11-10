@@ -22,13 +22,15 @@ function bool(value: string | undefined, fallback: boolean): boolean {
 export const appConfig = {
   wsUrl: env.VITE_WS_URL ?? 'ws://localhost:8080/ws',
   /**
-   * Reconnect after this much silence. The C++ map gateway does not emit
-   * heartbeats yet, so the default is deliberately longer than the intended
-   * 5 s heartbeat interval.
+   * Reconnect after this much silence. The gateway emits `heartbeat` every
+   * `feed.heartbeat_s` (5 s by default), so 15 s tolerates two missed beats and
+   * still recovers quickly when a replay ends or the backend dies.
    */
-  wsTimeoutMs: num(env.VITE_WS_TIMEOUT_MS, 60_000),
+  wsTimeoutMs: num(env.VITE_WS_TIMEOUT_MS, 15_000),
   /** Drop tracks that have not been updated for this long. */
   trackTtlMs: num(env.VITE_TRACK_TTL_MS, 8_000),
+  /** Dead-reckon markers between 10 Hz frames (VITE_MAP_ANIMATE=false disables). */
+  animate: bool(env.VITE_MAP_ANIMATE, true),
   /** Fit the map once to the first camera zones (or tracks if there are none). */
   mapAutofit: bool(env.VITE_MAP_AUTOFIT, true),
   mapStyle:

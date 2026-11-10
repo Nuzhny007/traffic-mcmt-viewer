@@ -8,6 +8,8 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 
 import { appConfig } from '../config';
+import { nowMs } from '../domain/clock';
+import { MAX_EXTRAPOLATION_MS } from '../domain/motion';
 import {
   createCameraLabelLayer,
   createCameraZoneLayer,
@@ -23,6 +25,9 @@ import { useTrackingStore } from '../store/trackingStore';
 import type { CameraZone, Vec2 } from '../types/tracking';
 
 type Bounds = [[number, number], [number, number]];
+
+/** Idle redraw cadence; only the stale-track fade changes without new data. */
+const FADE_TICK_MS = 250;
 
 function boundsOf(points: readonly Vec2[]): Bounds | null {
   if (points.length === 0) {
@@ -76,25 +81,37 @@ function DeckOverlay({ selectedId, onSelect }: MapViewProps) {
   // Imperative render loop: WebSocket messages only bump `trackBuffer.version`,
   // layers are rebuilt from the mutable buffer on the next animation frame.
   // No React render is involved per message.
+  //
+  // While dead reckoning is possible (a frame arrived in the last ~150 ms) the
+  // layers are rebuilt every frame so markers move smoothly between the 10 Hz
+  // updates. Otherwise the loop still ticks 4 times per second, which keeps the
+  // stale-track fade and the TTL removal visible without burning a full 60 fps
+  // when the feed is idle.
   useEffect(() => {
     let frame = 0;
     let lastVersion = -1;
     let lastSelected: number | null | undefined;
     let lastZones: typeof zoneList | null = null;
     let lastEmissionKey = '';
+    let lastRenderAt = 0;
 
     const render = () => {
       frame = requestAnimationFrame(render);
 
+      const now = nowMs();
       const emissionState = useEmissionStore.getState();
       const emissionKey = `${emissionBuffer.version}:${emissionState.visible}:${emissionState.pollutant}`;
 
-      if (
-        trackBuffer.version === lastVersion &&
-        selectedId === lastSelected &&
-        zoneList === lastZones &&
-        emissionKey === lastEmissionKey
-      ) {
+      const animating =
+        appConfig.animate && now - trackBuffer.latestUpdateAt <= MAX_EXTRAPOLATION_MS + 40;
+      const periodic = trackBuffer.size > 0 && now - lastRenderAt >= FADE_TICK_MS;
+      const changed =
+        trackBuffer.version !== lastVersion ||
+        selectedId !== lastSelected ||
+        zoneList !== lastZones ||
+        emissionKey !== lastEmissionKey;
+
+      if (!changed && !animating && !periodic) {
         return;
       }
 
@@ -102,7 +119,9 @@ function DeckOverlay({ selectedId, onSelect }: MapViewProps) {
       lastSelected = selectedId;
       lastZones = zoneList;
       lastEmissionKey = emissionKey;
+      lastRenderAt = now;
 
+      const atMs = appConfig.animate ? now : null;
       const tracks = trackBuffer.list();
       const layers: Layer[] = [];
       const emissionLayer = createEmissionLayer(
@@ -116,8 +135,8 @@ function DeckOverlay({ selectedId, onSelect }: MapViewProps) {
       layers.push(
         createCameraZoneLayer(zoneList),
         createCameraLabelLayer(zoneList),
-        createTrackPathLayer(tracks),
-        createTrackPointLayer(tracks, selectedId),
+        createTrackPathLayer(tracks, atMs, appConfig.trackTtlMs),
+        createTrackPointLayer(tracks, selectedId, atMs, appConfig.trackTtlMs),
       );
 
       overlay.setProps({ layers });

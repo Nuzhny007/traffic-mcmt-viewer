@@ -23,7 +23,8 @@ npm.cmd run dev
 
 Viewer совместим с C++ `trafficmcmt_map_gateway` из репозитория [TrafficMCMT](https://github.com/Nuzhny007/TrafficMCMT).
 Gateway читает JSONL с треклетами и отдаёт протокол v1 по адресу
-`ws://localhost:8080/ws` (health: `http://localhost:8080/health`).
+`ws://localhost:8080/ws` (health: `http://localhost:8080/health`), раз в
+`feed.heartbeat_s` присылая `heartbeat`.
 
 ```powershell
 # Auburn / Toomer's Corner, две камеры
@@ -83,8 +84,9 @@ npm.cmd run mock
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
 | `VITE_WS_URL` | `ws://localhost:8080/ws` | WebSocket бэкенда |
-| `VITE_WS_TIMEOUT_MS` | `60000` | переподключение после тишины, мс |
+| `VITE_WS_TIMEOUT_MS` | `15000` | переподключение после тишины, мс |
 | `VITE_TRACK_TTL_MS` | `8000` | удаление треков без обновлений, мс |
+| `VITE_MAP_ANIMATE` | `true` | dead reckoning между кадрами 10 Гц |
 | `VITE_MAP_STYLE` | CARTO dark matter | стиль MapLibre |
 | `VITE_MAP_AUTOFIT` | `true` | подстроить карту под первые зоны/треки |
 | `VITE_MAP_LON/LAT/ZOOM` | Aire, 5.9745 / 45.5268 / 16 | начальный вид (если авто-fit выключен) |
@@ -96,6 +98,8 @@ src/
   config.ts                 # env → конфиг приложения
   types/tracking.ts         # протокол WS v1 и типы сообщений
   domain/classes.ts         # классы объектов, цвета, подписи
+  domain/clock.ts           # монотонные часы для живых данных
+  domain/motion.ts          # dead reckoning, затухание, голова хвоста
   store/trackingStore.ts    # Zustand: соединение, зоны, выбор, статистика
   net/protocol.ts           # валидация кадров WS
   net/wsClient.ts           # reconnect, heartbeat watchdog, backoff
@@ -159,12 +163,17 @@ docs/protocol.md            # описание протокола WS v1
       обновляется из `requestAnimationFrame` — без React-рендера на сообщение.
 - [x] **Этап 2b** — совместимость с C++ `trafficmcmt_map_gateway`:
       `tracks_remove`, `snapshot` при подключении, `speed_kmh`, `trail` только
-      при первом объявлении, авто-fit карты под Aire/Auburn, таймаут 60 с
-      из-за отсутствия heartbeat в gateway.
+      при первом объявлении, авто-fit карты под Aire/Auburn, heartbeat раз в
+      `feed.heartbeat_s` и watchdog на 15 с.
 - [x] **Этап 2c** — слой концентраций: `emission_grid` (base64 float32,
       120×90 @ 1 Гц), `BitmapLayer` с логарифмической цветовой шкалой,
       переключение NOx/CO/PM2.5/PM10/CO2 и видимости слоя, панель статистики.
-- [ ] Этап 3 — анимация, интерполяция, typed-array буферы.
+- [x] **Этап 3a** — интерполяция: dead reckoning по `velocity` не дальше 150 мс,
+      хвост дотягивается до анимированного маркера, потерянные треки гаснут,
+      TTL и анимация считаются по монотонным часам (`performance.now()`).
+- [ ] Этап 3b — typed-array буферы (SoA) вместо массива объектов.
+- [ ] Этап 3c — интерполяция по времени кадра из потока (нужны корректные
+      `timestamp` из этапа 7 TrafficMCMT).
 - [ ] Этап 4 — оптимизация под 1000+ треков.
 - [ ] Этап 5 — фильтры и панель управления.
 
