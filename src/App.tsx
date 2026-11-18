@@ -5,6 +5,7 @@ import { EmissionPanel } from './components/EmissionPanel';
 import { MapView } from './components/MapView';
 import { TrackDetails } from './components/TrackDetails';
 import { appConfig } from './config';
+import { DemoApp } from './demo/DemoApp';
 import { ALL_CLASSES } from './domain/classes';
 import { matchesFilter } from './domain/filter';
 import { useFps } from './hooks/useFps';
@@ -76,6 +77,7 @@ function useViewShortcuts(clearSelection: () => void) {
 }
 
 export function App() {
+  const isDemo = new URLSearchParams(window.location.search).has('demo');
   const fps = useFps();
   const selectedId = useTrackingStore((state) => state.selectedId);
   const select = useTrackingStore((state) => state.select);
@@ -90,13 +92,16 @@ export function App() {
   const hiddenByFilter = selected !== null && !matchesFilter(selected, view);
 
   useEffect(() => {
+    if (isDemo) {
+      return undefined; // DemoApp owns the feed lifecycle.
+    }
     startFeed();
     const stopViewSync = startViewSync();
     return () => {
       stopViewSync();
       stopFeed();
     };
-  }, []);
+  }, [isDemo]);
 
   const handleSelect = useCallback(
     (id: number | null) => select(id),
@@ -105,6 +110,10 @@ export function App() {
   const clearSelection = useCallback(() => select(null), [select]);
 
   useViewShortcuts(clearSelection);
+
+  if (isDemo) {
+    return <DemoApp />;
+  }
 
   const statusText =
     connection === 'closed' && reconnectAttempt > 0

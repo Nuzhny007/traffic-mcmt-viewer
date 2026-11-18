@@ -128,6 +128,15 @@ function parseEmissionGrid(value: unknown): EmissionGridMessage | null {
   }
 
   const bounds: EmissionBounds = { west, south, east, north };
+  const totals: Partial<Record<Pollutant, number>> = {};
+  if (isRecord(value.totals_g)) {
+    for (const pollutant of POLLUTANTS) {
+      const total = value.totals_g[pollutant];
+      if (typeof total === 'number' && Number.isFinite(total) && total >= 0) {
+        totals[pollutant] = total;
+      }
+    }
+  }
   return {
     type: 'emission_grid',
     timestamp:
@@ -139,6 +148,7 @@ function parseEmissionGrid(value: unknown): EmissionGridMessage | null {
     cols,
     rows,
     fields,
+    totals_g: totals,
   };
 }
 

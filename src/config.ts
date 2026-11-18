@@ -33,6 +33,12 @@ export const appConfig = {
   animate: bool(env.VITE_MAP_ANIMATE, true),
   /** Fit the map once to the first camera zones (or tracks if there are none). */
   mapAutofit: bool(env.VITE_MAP_AUTOFIT, true),
+  /**
+   * Expand the fitted bounds around their centre by this factor: 2 keeps the
+   * whole emission plume in view as it drifts downwind instead of zooming to
+   * the tiny camera zone it was born in.
+   */
+  mapFitExpand: num(env.VITE_MAP_FIT_EXPAND, 2),
   mapStyle:
     env.VITE_MAP_STYLE ??
     'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',

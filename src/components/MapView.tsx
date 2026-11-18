@@ -233,7 +233,20 @@ export function MapView({ selectedId, onSelect }: MapViewProps) {
       map.jumpTo({ center: [(minLon + maxLon) / 2, (minLat + maxLat) / 2], zoom: 17 });
       return;
     }
-    map.fitBounds(bounds, { padding: 80, maxZoom: 18, duration: 0 });
+    // Zoom out around the bounds centre (VITE_MAP_FIT_EXPAND, default 2) so
+    // the drifting emission plume stays visible instead of filling the view.
+    const expand = Math.max(1, appConfig.mapFitExpand);
+    const centerLon = (minLon + maxLon) / 2;
+    const centerLat = (minLat + maxLat) / 2;
+    const halfLon = ((maxLon - minLon) / 2) * expand;
+    const halfLat = ((maxLat - minLat) / 2) * expand;
+    map.fitBounds(
+      [
+        [centerLon - halfLon, centerLat - halfLat],
+        [centerLon + halfLon, centerLat + halfLat],
+      ],
+      { padding: 80, maxZoom: 18, duration: 0 },
+    );
   }, [mapReady, zoneList, trackCount]);
 
   return (

@@ -1,4 +1,5 @@
 import { appConfig } from '../config';
+import { noteTrackTimestamp } from '../demo/demoClock';
 import { nowMs } from '../domain/clock';
 import { useEmissionStore } from '../store/emissionStore';
 import { useTrackingStore } from '../store/trackingStore';
@@ -41,6 +42,7 @@ function handleMessage(message: ServerMessage): void {
         message.mode ?? 'delta',
         receivedAt,
       );
+      noteTrackTimestamp(message.timestamp);
       if (message.camera_zones) {
         applyZones(message.camera_zones);
       }

@@ -18,6 +18,8 @@ interface EmissionState {
   cols: number;
   rows: number;
   stats: EmissionStatsByPollutant;
+  /** Cumulative released mass per pollutant, grams (additive `totals_g`). */
+  totals: Partial<Record<Pollutant, number>>;
   setVisible: (visible: boolean) => void;
   setPollutant: (pollutant: Pollutant) => void;
   setFrameMeta: (frame: EmissionGridMessage) => void;
@@ -54,6 +56,7 @@ export const useEmissionStore = create<EmissionState>((set) => ({
   cols: 0,
   rows: 0,
   stats: {},
+  totals: {},
 
   setVisible: (visible) => set({ visible }),
 
@@ -66,6 +69,7 @@ export const useEmissionStore = create<EmissionState>((set) => ({
       cols: frame.cols,
       rows: frame.rows,
       stats: collectStats(frame),
+      totals: frame.totals_g ?? {},
     }),
 
   reset: () =>
@@ -77,5 +81,6 @@ export const useEmissionStore = create<EmissionState>((set) => ({
       cols: 0,
       rows: 0,
       stats: {},
+      totals: {},
     }),
 }));

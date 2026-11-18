@@ -6,6 +6,10 @@ dist-ssr
 .env.*
 !.env.example
 
+# demo (large local assets: camera mp4, recorded video)
+public/demo/*.mp4
+demo/
+
 # editor / OS
 .vscode/*
 !.vscode/extensions.json

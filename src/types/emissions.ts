@@ -34,6 +34,11 @@ export interface EmissionGridMessage {
   cols: number;
   rows: number;
   fields: Partial<Record<Pollutant, EmissionField>>;
+  /**
+   * Additive v1 extension: cumulative released mass per pollutant in grams,
+   * since the feed start. Absent when the backend predates the field.
+   */
+  totals_g?: Partial<Record<Pollutant, number>>;
 }
 
 export function isPollutant(value: string): value is Pollutant {
