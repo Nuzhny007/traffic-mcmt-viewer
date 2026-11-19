@@ -4,20 +4,15 @@ import { appConfig } from '../config';
 import { nowMs } from '../domain/clock';
 import { deadReckon, fadeAlpha } from '../domain/motion';
 import { trackBuffer } from '../net/feed';
-import {
-  DEMO_GEO_POINTS,
-  DEMO_VIDEO_SIZE,
-  DEMO_VIDEO_URL,
-  trackColor,
-} from './demoData';
+import { trackColor, type DemoCamera } from './demoData';
 import { expectedVideoTime } from './demoClock';
 import { applyHomography, homographyFromPoints, type Homography } from './homography';
 
 /**
  * Demo overlay TTL: the feed removes a track about 1 s after its last
- * observation (`feed.track_ttl_s` in `configs/map_feed_aire.yaml`), so fading
- * over the same window lets the marker disappear instead of hanging and then
- * popping out. The live app keeps its own, longer `trackTtlMs` safety net.
+ * observation (`feed.track_ttl_s` in the demo feed config), so fading over the
+ * same window lets the marker disappear instead of hanging and then popping
+ * out. The live app keeps its own, longer `trackTtlMs` safety net.
  */
 const DEMO_TRACK_TTL_MS = 1100;
 /** Re-seek when the drift between data time and video time exceeds this. */
@@ -26,6 +21,8 @@ const SEEK_THRESHOLD_S = 0.4;
 const RATE_THRESHOLD_S = 0.08;
 
 interface VideoPanelProps {
+  /** Camera whose video and geo binding are drawn in this panel. */
+  camera: DemoCamera;
   /** Demo start time; the video waits for it so the replay and the frame agree. */
   enabled: boolean;
 }
@@ -33,17 +30,18 @@ interface VideoPanelProps {
 /**
  * Camera video with a CarsCounting-style canvas overlay driven by the live WS
  * feed: one colour per object ID, its trail and a speed tag. The overlay is
- * projected from WGS-84 back to image pixels with the inverse of the
- * `geo_bind.ini` homography.
+ * projected from WGS-84 back to image pixels with the inverse of the camera's
+ * `geo_bind.ini` homography. Only tracks reported by this camera are drawn, so
+ * the same panel works for the single-camera and the two-camera scene.
  */
-export function VideoPanel({ enabled }: VideoPanelProps) {
+export function VideoPanel({ camera, enabled }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const startedRef = useRef(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const homography = homographyFromPoints(DEMO_GEO_POINTS);
+    const homography = homographyFromPoints(camera.geoPoints);
     if (!homography) {
       return;
     }
@@ -87,6 +85,8 @@ export function VideoPanel({ enabled }: VideoPanelProps) {
       text: string,
       x: number,
       y: number,
+      width: number,
+      height: number,
       color: string,
     ) => {
       ctx.font = '600 12px Inter, Segoe UI, system-ui, sans-serif';
@@ -94,8 +94,10 @@ export function VideoPanel({ enabled }: VideoPanelProps) {
       const paddingX = 5;
       const boxWidth = metrics.width + paddingX * 2;
       const boxHeight = 17;
-      const boxX = x + 9;
-      const boxY = y - 20;
+      // Objects near the right/top edge would push the tag outside the frame;
+      // keep it inside instead of letting the video crop it.
+      const boxX = Math.min(Math.max(4, x + 9), width - boxWidth - 4);
+      const boxY = Math.min(Math.max(4, y - 20), height - boxHeight - 4);
       ctx.fillStyle = 'rgba(7, 11, 20, 0.72)';
       ctx.beginPath();
       ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 4);
@@ -155,6 +157,8 @@ export function VideoPanel({ enabled }: VideoPanelProps) {
         `#${track.id} · ${Math.round(speed)} км/ч`,
         head.x,
         head.y,
+        width,
+        height,
         color,
       );
       ctx.globalAlpha = 1;
@@ -191,6 +195,9 @@ export function VideoPanel({ enabled }: VideoPanelProps) {
       const now = nowMs();
       const ttl = Math.min(appConfig.trackTtlMs, DEMO_TRACK_TTL_MS);
       for (const track of trackBuffer.list()) {
+        if (track.cameraId !== camera.cameraId) {
+          continue;
+        }
         const ageMs = now - track.lastSeen;
         if (ageMs > ttl) {
           continue;
@@ -204,20 +211,20 @@ export function VideoPanel({ enabled }: VideoPanelProps) {
 
     frame = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frame);
-  }, [enabled]);
+  }, [camera, enabled]);
 
   return (
     <div className="video-shell">
-      {failed && <div className="video-error">Видео недоступно: {DEMO_VIDEO_URL}</div>}
+      {failed && <div className="video-error">Видео недоступно: {camera.videoUrl}</div>}
       <video
         ref={videoRef}
         className="video-frame"
-        src={DEMO_VIDEO_URL}
+        src={camera.videoUrl}
         muted
         playsInline
         preload="auto"
-        width={DEMO_VIDEO_SIZE.width}
-        height={DEMO_VIDEO_SIZE.height}
+        width={camera.videoSize.width}
+        height={camera.videoSize.height}
       />
       <canvas ref={canvasRef} className="video-overlay" />
     </div>

@@ -1,21 +1,35 @@
 #!/usr/bin/env node
-// Records the single-camera air-monitoring demo (`?demo=1`) into an mp4.
+// Records a demo scene into an mp4.
 //
 //   npm run build
-//   npm run demo:record
+//   npm run demo:record                         # single-camera Aire (?demo=1)
+//   node scripts/record-demo.mjs --scene auburn # two-camera Auburn (?demo=auburn)
 //
-// The script starts the C++ map gateway (replaying the long Aire export),
-// serves the production build, opens Edge on `about:blank`, injects the
-// `__demoWait` handshake before the page loads and navigates to the demo
-// scene. The page arms itself once the WS feed holds data; the screencast
-// starts first and only then the recorder flips `__demoGo`, so the in-page
-// director (tracks -> NOx -> PM2.5 -> final) is captured from the very first
-// frame. Frames are muxed into mp4 with ffmpeg.
+// The script starts the C++ map gateway (replaying the long export), serves the
+// production build, opens Edge on `about:blank`, injects the `__demoWait`
+// handshake before the page loads and navigates to the demo scene. The page
+// arms itself once the WS feed holds data; the screencast starts first and only
+// then the recorder flips `__demoGo`, so the in-page director (tracks -> NOx ->
+// PM2.5 -> final) is captured from the very first frame. The captured frames
+// are then resampled to a constant 30 fps grid and encoded into an mp4 with
+// ffmpeg; resampling (instead of a variable-framerate concat list) keeps the
+// clip exactly as long as the scenario, because Chrome's screencast frame
+// timestamps arrive in bursts far denser than 60 fps.
 //
-// Flags: --duration <s> hard limit, --out <path>, --keep (keep temp frames),
-// --skip-gateway (attach to a running gateway), --ws-port/--http-port/--cdp-port.
+// Flags: --scene aire|auburn, --duration <s> stop deadline for the screencast
+// (the director scenario is 125 s; the cap keeps a starved poll from recording
+// past the end of the replayed data), --out <path>, --keep (keep temp frames),
+// --skip-gateway (attach to a running gateway), --gateway-input (single file
+// override), --gateway-config, --ws-port/--http-port/--cdp-port.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  rmSync,
+  writeFile,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -31,11 +45,36 @@ const flag = (name, fallback) => {
 };
 const has = (name) => argv.includes(`--${name}`);
 
+/** Scene presets: page query, replay inputs, feed config and output. */
+const SCENES = {
+  aire: {
+    query: '?demo=1',
+    inputs: [path.resolve(mttRoot, 'build/datasets/aire/cam-01-demo.jsonl')],
+    config: 'configs/map_feed_aire.yaml',
+    out: 'demo/trafficmcmt-demo.mp4',
+  },
+  auburn: {
+    query: '?demo=auburn',
+    inputs: [
+      path.resolve(mttRoot, 'build/datasets/auburn_toomer/cam-01-demo.jsonl'),
+      path.resolve(mttRoot, 'build/datasets/auburn_toomer/cam-02-demo.jsonl'),
+    ],
+    config: 'configs/map_feed_auburn_demo.yaml',
+    out: 'demo/auburn-dual-demo.mp4',
+  },
+};
+
+const sceneName = flag('scene', 'aire');
+const scene = SCENES[sceneName];
+if (!scene) {
+  throw new Error(`unknown --scene ${sceneName}; expected ${Object.keys(SCENES).join('|')}`);
+}
+
 const wsPort = Number(flag('ws-port', '8080'));
 const httpPort = Number(flag('http-port', '4173'));
 const cdpPort = Number(flag('cdp-port', '9333'));
-const hardDurationS = Number(flag('duration', '240'));
-const outPath = path.resolve(root, flag('out', 'demo/trafficmcmt-demo.mp4'));
+const hardDurationS = Number(flag('duration', '132'));
+const outPath = path.resolve(root, flag('out', scene.out));
 const keep = has('keep');
 const skipGateway = has('skip-gateway');
 
@@ -46,11 +85,10 @@ const gatewayExe = path.join(
   'Release',
   'trafficmcmt_map_gateway.exe',
 );
-const gatewayInput = path.resolve(
-  mttRoot,
-  flag('gateway-input', 'build/datasets/aire/cam-01-demo.jsonl'),
-);
-const gatewayConfig = flag('gateway-config', 'configs/map_feed_aire.yaml');
+const gatewayInputs = has('gateway-input')
+  ? [path.resolve(mttRoot, flag('gateway-input'))]
+  : scene.inputs;
+const gatewayConfig = flag('gateway-config', scene.config);
 
 const children = [];
 
@@ -172,19 +210,22 @@ async function main() {
   const frameDir = path.join(os.tmpdir(), `trafficmcmt-demo-frames-${Date.now()}`);
   mkdirSync(frameDir, { recursive: true });
 
-  // 1. Gateway replaying the long export.
+  // 1. Gateway replaying the long export. Several `--input` flags are merged
+  //    onto one timeline, which is what keeps the two cameras in sync.
   if (!skipGateway) {
     if (!existsSync(gatewayExe)) throw new Error(`gateway not found: ${gatewayExe}`);
-    if (!existsSync(gatewayInput)) throw new Error(`dataset not found: ${gatewayInput}`);
+    for (const input of gatewayInputs) {
+      if (!existsSync(input)) throw new Error(`dataset not found: ${input}`);
+    }
     start(gatewayExe, [
-      '--input', gatewayInput,
+      ...gatewayInputs.flatMap((input) => ['--input', input]),
       '--config', gatewayConfig,
       '--port', String(wsPort),
       '--speed', '1',
       '--loop',
     ], { cwd: mttRoot });
     await waitForUrl(`http://localhost:${wsPort}/health`);
-    console.log(`gateway up on :${wsPort}`);
+    console.log(`gateway up on :${wsPort} (${gatewayInputs.length} input(s))`);
   }
 
   // 2. Production preview server.
@@ -233,7 +274,7 @@ async function main() {
   await send('Page.addScriptToEvaluateOnNewDocument', {
     source: 'window.__demoWait = true;',
   });
-  await send('Page.navigate', { url: `http://127.0.0.1:${httpPort}/?demo=1` });
+  await send('Page.navigate', { url: `http://127.0.0.1:${httpPort}/${scene.query}` });
   console.log('browser up, waiting for the demo page to arm…');
 
   // 4. Wait until the page is connected, holds track data and waits for `go`.
@@ -250,8 +291,19 @@ async function main() {
   await sleep(1500); // let the first emission frames settle
 
   // 5. Screencast; the scenario starts only once frames are being captured.
+  //
+  // Frames are written asynchronously: a synchronous write here (plus the
+  // antivirus scan of every new 150 KB file) blocks the CDP socket, so frame
+  // acks fall behind, Chrome buffers frames, and the muxed timeline runs
+  // longer than the scenario. The stop deadline is checked per frame and is a
+  // wall-clock backstop for a late `__demoDone` poll.
   const frames = [];
   let frameIndex = 0;
+  let stopAt = 0;
+  let stopping = false;
+  let pendingWrites = 0;
+  let lastTs = 0;
+  let timestampFixes = 0;
   setHandler('Page', (message) => {
     if (message.method !== 'Page.screencastFrame') {
       return;
@@ -260,9 +312,25 @@ async function main() {
     send('Page.screencastFrameAck', { sessionId }).catch(() => {});
     frameIndex += 1;
     const name = `${String(frameIndex).padStart(6, '0')}.jpg`;
-    const ts = metadata?.timestamp ?? Date.now() / 1000;
+    const rawTs = metadata?.timestamp ?? Date.now() / 1000;
+    // Chrome occasionally repeats or rewinds `metadata.timestamp`; the mux
+    // clamps every non-positive delta to 1/60 s, which silently stretches the
+    // clip. Keep the timeline strictly monotonic instead.
+    let ts = rawTs;
+    if (lastTs > 0 && ts <= lastTs) {
+      ts = lastTs + 0.001;
+      timestampFixes += 1;
+    }
+    lastTs = ts;
     frames.push({ name, ts, at: Date.now() });
-    writeFileSync(path.join(frameDir, name), Buffer.from(data, 'base64'));
+    pendingWrites += 1;
+    writeFile(path.join(frameDir, name), Buffer.from(data, 'base64'), () => {
+      pendingWrites -= 1;
+    });
+    if (stopAt > 0 && !stopping && Date.now() >= stopAt) {
+      stopping = true;
+      send('Page.stopScreencast').catch(() => {});
+    }
   });
   await send('Page.startScreencast', {
     format: 'jpeg',
@@ -274,12 +342,32 @@ async function main() {
   await sleep(1000); // make sure the first screencast frames are flowing
   await evaluate(send, 'window.__demoGo = true');
   console.log('recording…');
+  {
+    const layout = await evaluate(send, `JSON.stringify({
+      inner: [innerWidth, innerHeight],
+      dpr: devicePixelRatio,
+      scroll: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
+      shells: [...document.querySelectorAll('.video-shell')].map((s) => {
+        const r = s.getBoundingClientRect();
+        return [Math.round(r.left), Math.round(r.right), Math.round(r.width), Math.round(r.height)];
+      }),
+      canvases: [...document.querySelectorAll('.video-overlay')].map((c) => {
+        const r = c.getBoundingClientRect();
+        return [c.clientWidth, c.clientHeight, c.width, c.height, Math.round(r.left), Math.round(r.right)];
+      }),
+    })`);
+    console.log(`layout: ${layout}`);
+  }
 
   const startWall = Date.now();
+  stopAt = startWall + hardDurationS * 1000;
   let nextProgress = startWall + 10_000;
   let done = false;
   while (!done) {
     await sleep(500);
+    if (stopping) {
+      done = true;
+    }
     if ((await evaluate(send, 'window.__demoDone === true')) === true) {
       done = true;
     }
@@ -302,28 +390,59 @@ async function main() {
       break;
     }
   }
-  await sleep(2000); // hold the final frame for a clean outro
-  await send('Page.stopScreencast');
-  console.log(`captured ${frames.length} frames`);
-
-  // 6. Mux with ffmpeg (concat demuxer + per-frame durations).
-  const concatLines = [];
-  for (let i = 0; i < frames.length; i += 1) {
-    const duration =
-      i + 1 < frames.length ? frames[i + 1].ts - frames[i].ts : 1 / 30;
-    concatLines.push(`file '${frames[i].name}'`);
-    concatLines.push(`duration ${Math.max(duration, 1 / 60).toFixed(6)}`);
+  await sleep(stopping ? 500 : 2000); // hold the final frame for a clean outro
+  await send('Page.stopScreencast').catch(() => {});
+  while (pendingWrites > 0) {
+    await sleep(100); // let the queued JPEG writes land before muxing
   }
-  concatLines.push(`file '${frames[frames.length - 1].name}'`);
-  writeFileSync(path.join(frameDir, 'frames.txt'), concatLines.join('\n'));
+  console.log(`captured ${frames.length} frames`);
+  {
+    const first = frames[0];
+    const last = frames[frames.length - 1];
+    const span = last.ts - first.ts;
+    const wall = (Date.now() - startWall) / 1000;
+    console.log(
+      `timeline: ${span.toFixed(2)}s from frame timestamps, ${wall.toFixed(2)}s wall, ` +
+        `${((frames.length - 1) / span).toFixed(1)} fps, ${timestampFixes} ts fixes`,
+    );
+  }
+
+  // 6. Resample to a constant 30 fps grid, then mux the numbered sequence.
+  //
+  // Chrome delivers screencast frames unevenly: bursts of two frames with
+  // almost the same timestamp, then a gap of 50-70 ms. A concat list with a
+  // `duration` per frame cannot express that (every delta below 1/60 s has to
+  // be clamped up), and the clamped deltas alone stretched a 125 s scenario to
+  // 150 s. Picking the newest frame at each 1/30 s tick keeps both the length
+  // and the speed of the recorded scenario.
+  const FPS = 30;
+  const firstTs = frames[0].ts;
+  const spanS = frames[frames.length - 1].ts - firstTs;
+  const outFrames = Math.max(1, Math.round(spanS * FPS));
+  const seqDir = path.join(frameDir, 'seq');
+  mkdirSync(seqDir, { recursive: true });
+  let pick = 0;
+  for (let k = 0; k < outFrames; k += 1) {
+    const target = firstTs + k / FPS;
+    while (pick + 1 < frames.length && frames[pick + 1].ts <= target) {
+      pick += 1;
+    }
+    const dst = path.join(seqDir, `${String(k + 1).padStart(6, '0')}.jpg`);
+    try {
+      linkSync(path.join(frameDir, frames[pick].name), dst);
+    } catch {
+      // Hard links can fail (different volume, FAT, some network shares).
+      copyFileSync(path.join(frameDir, frames[pick].name), dst);
+    }
+  }
+  console.log(`timeline: ${outFrames} frames at ${FPS} fps = ${(outFrames / FPS).toFixed(2)}s`);
 
   mkdirSync(path.dirname(outPath), { recursive: true });
   const ffmpeg = spawn('ffmpeg', [
     '-y',
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', path.join(frameDir, 'frames.txt'),
-    '-vf', 'fps=30,format=yuv420p',
+    '-framerate', String(FPS),
+    '-i', path.join(seqDir, '%06d.jpg'),
+    '-pix_fmt', 'yuv420p',
     '-c:v', 'libx264',
     '-crf', '19',
     '-preset', 'medium',

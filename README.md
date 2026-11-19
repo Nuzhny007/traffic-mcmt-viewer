@@ -87,17 +87,27 @@ npm.cmd run mock
 передавать коллегам. Без параметров в URL берётся последнее состояние из
 `localStorage`.
 
-## Демо-режим (`?demo=1`)
+## Демо-режим (`?demo=1`, `?demo=auburn`)
 
-Одно окно 1920×1080 для записи демонстрационного ролика: слева видео камеры
+Одно окно 1920×1080 для записи демонстрационного ролика.
+
+`?demo=1` — одна камера (Aire): слева видео камеры
 (`public/demo/Relaxing_highway_traffic.mp4`) с CarsCounting-оверлеем из живого
-WS-потока — каждый объект своим цветом (палитра по ID), его хвост, стрелка
-курса и подпись «ID · скорость». Треки проецируются на кадр обратной
-гомографией по контрольным точкам из `geo_bind.ini` (`src/demo/homography.ts`);
+WS-потока — каждый объект своим цветом (палитра по ID), его хвост и подпись
+«ID · скорость». Треки проецируются на кадр обратной гомографией по
+контрольным точкам из `geo_bind.ini` (`src/demo/homography.ts`);
 воспроизведение видео синхронизируется с метками времени потока
 (`src/demo/demoClock.ts`). Справа — карта: треки, хвосты, зона камеры и слой
 концентраций; под видео — панель «Выбросы» с накопленной массой по каждому
 загрязнителю (аддитивное поле `totals_g`, г) и текущими г/с, обновление 1 Гц.
+
+`?demo=auburn` — две синхронные камеры одного перекрёстка (Auburn, AL,
+Toomer's Corner): два видео (`public/demo/auburn-cam-01.mp4` и
+`auburn-cam-02.mp4`) рядом, под ними общая карта и панель выбросов. Обе камеры
+экспортированы с общим `--geo-origin 32.606456,-85.481891` и одним
+`--start-epoch-ms`, поэтому их треки ложатся на одну карту, а видео
+синхронизируются по одним и тем же меткам времени; оверлей каждого видео
+показывает только треки своего `camera_id`.
 
 Сценарий ведёт встроенный режиссёр (`src/demo/director.ts`): 0–35 с — только
 объекты и треки → 35–75 с — слой NOx поверх треков → 75–115 с — переключение
@@ -105,14 +115,17 @@ WS-потока — каждый объект своим цветом (пали�
 
 ```powershell
 npm.cmd run build
-npm.cmd run demo:record   # gateway + preview + Edge + CDP-screencast → demo/trafficmcmt-demo.mp4
+npm.cmd run demo:record          # Aire → demo/trafficmcmt-demo.mp4
+npm.cmd run demo:record:auburn   # Auburn (две камеры) → demo/auburn-dual-demo.mp4
 ```
 
-Скрипт `scripts/record-demo.mjs` сам поднимает `trafficmcmt_map_gateway` на
-экспорте `cam-01-demo.jsonl` (~3 мин треклетов: `scripts/run_aire.ps1` c
-`-MaxFrames 5400`, вывод в `build/datasets/aire/cam-01-demo.jsonl`), стартует
-`vite preview`, открывает окно Edge и снимает сценарий через CDP, собирая
-кадры в mp4 через ffmpeg. `--skip-gateway` — подключиться к уже запущенному.
+Скрипт `scripts/record-demo.mjs` (`--scene aire|auburn`) сам поднимает
+`trafficmcmt_map_gateway` на экспорте сцены (для Aire — `cam-01-demo.jsonl`,
+~3 мин треклетов: `scripts/run_aire.ps1` c `-MaxFrames 5400`; для Auburn — два
+`--input`, `cam-01-demo.jsonl` + `cam-02-demo.jsonl`, конфиг
+`configs/map_feed_auburn_demo.yaml`), стартует `vite preview`, открывает окно
+Edge и снимает сценарий через CDP, собирая кадры в mp4 через ffmpeg.
+`--skip-gateway` — подключиться к уже запущенному.
 
 ## Производительность
 
@@ -253,6 +266,8 @@ docs/protocol.md            # описание протокола WS v1
 - [x] **Демо-режим** — `?demo=1`: видео камеры с CarsCounting-оверлеем из
       живого потока (обратная гомография по `geo_bind.ini`), автосценарий
       переключения слоёв выбросов, панель накопленных `totals_g`, запись
-      ролика через `npm run demo:record`.
+      ролика через `npm run demo:record`. `?demo=auburn` — две синхронные
+      камеры одного перекрёстка рядом с общей картой, запись через
+      `npm run demo:record:auburn`.
 
 Подробности протокола: [`docs/protocol.md`](docs/protocol.md).

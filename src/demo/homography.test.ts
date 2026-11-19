@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEMO_GEO_POINTS } from './demoData';
+import { AUBURN_DEMO, DEMO_GEO_POINTS, demoSceneFromSearch } from './demoData';
 import { applyHomography, homographyFromPoints } from './homography';
 
 describe('homographyFromPoints', () => {
@@ -35,5 +35,35 @@ describe('homographyFromPoints', () => {
     expect(mid.x).toBeLessThan(1);
     expect(mid.y).toBeGreaterThan(0);
     expect(mid.y).toBeLessThan(1);
+  });
+
+  it('reproduces both Auburn camera bindings', () => {
+    for (const camera of AUBURN_DEMO.cameras) {
+      const h = homographyFromPoints(camera.geoPoints);
+      expect(h).not.toBeNull();
+      for (const { lon, lat, px, py } of camera.geoPoints) {
+        const point = applyHomography(h!, lon, lat);
+        // Longitude ~-85 makes the raw DLT slightly worse conditioned than the
+        // Aire fit; the residual stays far below a pixel at 1920x1080.
+        expect(Math.abs(point.x - px) * camera.videoSize.width).toBeLessThan(0.1);
+        expect(Math.abs(point.y - py) * camera.videoSize.height).toBeLessThan(0.1);
+      }
+    }
+  });
+});
+
+describe('demoSceneFromSearch', () => {
+  it('selects the two-camera Auburn scene', () => {
+    expect(demoSceneFromSearch('?demo=auburn').key).toBe('auburn');
+    expect(demoSceneFromSearch('?demo=auburn').cameras).toHaveLength(2);
+    expect(demoSceneFromSearch('?demo=auburn').cameras.map((c) => c.cameraId)).toEqual([1, 2]);
+  });
+
+  it('keeps the original single-camera demo for ?demo=1 and unknown values', () => {
+    for (const search of ['?demo=1', '?demo=', '']) {
+      const scene = demoSceneFromSearch(search);
+      expect(scene.key).toBe('1');
+      expect(scene.cameras).toHaveLength(1);
+    }
   });
 });

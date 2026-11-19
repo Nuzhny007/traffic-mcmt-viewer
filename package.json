@@ -12,6 +12,7 @@
     "test": "vitest run",
     "perf": "node scripts/perf-smoke.mjs",
     "demo:record": "node scripts/record-demo.mjs",
+    "demo:record:auburn": "node scripts/record-demo.mjs --scene auburn",
     "mock": "python mock/mock_server.py"
   },
   "dependencies": {
