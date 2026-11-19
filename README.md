@@ -2,6 +2,8 @@
 
 Веб-визуализация MCMT-треков в реальном времени: **deck.gl 9 + MapLibre GL JS + React 18 + TypeScript + Vite**.
 
+[![Multi-Camera Traffic Monitoring and Real-Time Emissions Estimation](https://img.youtube.com/vi/L_xdTEQiT6s/0.jpg)](https://youtu.be/L_xdTEQiT6s)
+
 ## Требования
 
 - Node.js ≥ 22 (проверено на 26.13.0 LTS)
