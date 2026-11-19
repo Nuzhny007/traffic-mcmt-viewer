@@ -81,9 +81,10 @@ export function trailWithHead(trail: Vec2[], head: Vec2): Vec2[] {
 /**
  * Opacity multiplier for a track that has not been updated for `ageMs`.
  *
- * The gateway removes a track after 3 s (`feed.track_ttl_s`), the client TTL is
- * 8 s; fading over the local TTL keeps a dropped track visible long enough to
- * notice instead of blinking out.
+ * The gateway removes a track after `feed.track_ttl_s` (1 s in the Aire demo
+ * config, 3 s by default), the client TTL is 8 s; fading over the local TTL
+ * keeps a dropped track visible long enough to notice instead of blinking out.
+ * The demo video overlay shortens the TTL to match the feed, see `VideoPanel`.
  */
 export function fadeAlpha(ageMs: number, ttlMs: number): number {
   if (!(ttlMs > 0) || ageMs <= 0) {

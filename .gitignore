@@ -8,7 +8,8 @@ dist-ssr
 
 # demo (large local assets: camera mp4, recorded video)
 public/demo/*.mp4
-demo/
+# Root output folder only: unanchored `demo/` also hid src/demo/*.tsx.
+/demo/
 
 # editor / OS
 .vscode/*
